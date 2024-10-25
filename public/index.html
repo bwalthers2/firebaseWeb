@@ -1,234 +1,164 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        #background-video {
-            position: fixed;
-            right: 0;
-            bottom: 0;
-            min-width: 100%;
-            min-height: 100%;
-            z-index: -1;
-            background: linear-gradient(45deg, 
-                #009B3A 33%, 
-                #FED100 33%, #FED100 66%, 
-                #000000 66%);
-            background-size: 300% 300%;
-            animation: gradientBG 10s ease infinite;
-        }
-
-        #score-container {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 32px;
-            color: white;
-            font-family: Arial, sans-serif;
-            z-index: 100;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
-
-        .paddle {
-            position: absolute;
-            width: 20px;
-            height: 100px;
-            background: white;
-            border-radius: 10px;
-        }
-
-        #computer-paddle {
-            left: 50px;
-        }
-
-        #player-paddle {
-            right: 50px;
-        }
-
-        #ball {
-            position: absolute;
-            width: 40px;
-            height: 40px;
-            background-image: url('/api/placeholder/40/40');
-            background-size: contain;
-            background-repeat: no-repeat;
-        }
-
-        @keyframes gradientBG {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Balloon Pop Game</title>
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 </head>
 <body>
-    <div id="background-video"></div>
-    <div id="score-container">
-        Computer: <span id="computer-score">0</span> | 
-        Player: <span id="player-score">0</span>
+    <div id="game-container">
+        <h1>Balloon Pop Game</h1>
+        <input type="text" id="player-name-input" placeholder="Enter your name" maxlength="20">
+        <div class="game-info">
+            <div>Score: <span id="score">0</span></div>
+            <div>Time: <span id="time">30</span>s</div>
+        </div>
+        <div id="balloon">🎈</div>
+        <button id="start-button">Start Game</button>
+        <div id="high-scores">
+            <h2>Global Top 10</h2>
+            <div id="scores-list">
+                <!-- High scores will be displayed here -->
+            </div>
+        </div>
     </div>
-    <div id="computer-paddle" class="paddle"></div>
-    <div id="player-paddle" class="paddle"></div>
-    <div id="ball"></div>
 
     <script>
-        const ball = document.getElementById('ball');
-        const computerPaddle = document.getElementById('computer-paddle');
-        const playerPaddle = document.getElementById('player-paddle');
-        const computerScoreElement = document.getElementById('computer-score');
-        const playerScoreElement = document.getElementById('player-score');
-
-        let computerScore = 0;
-        let playerScore = 0;
-
-        // Ball movement
-        let ballX = window.innerWidth / 2;
-        let ballY = window.innerHeight / 2;
-        let ballSpeedX = 5;
-        let ballSpeedY = 5;
-        const ballSize = 40;
-
-        // Paddle movement
-        let playerPaddleY = window.innerHeight / 2;
-        let computerPaddleY = window.innerHeight / 2;
+        // Initialize Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyCVh8211DIf_Vhbt81UZ8C42sQD_KC0DqU",
+            authDomain: "mebomborastaman.firebaseapp.com",
+            databaseURL: "https://mebomborastaman.firebaseio.com",
+            projectId: "mebomborastaman",
+            storageBucket: "mebomborastaman.appspot.com",
+            messagingSenderId: "153712567065",
+            appId: "1:153712567065:web:33f23b69b3f950e40edb88"
+        };
         
-        // Computer AI difficulty
-        let computerReactionDelay = 0;
-        let targetY = window.innerHeight / 2;
-        let missProb = 0.2; // 20% chance to miss
-        let lastMissDecision = Date.now();
-        let shouldMiss = false;
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
 
-        function checkCollision(rectA, rectB) {
-            return !(
-                rectA.right < rectB.left ||
-                rectA.left > rectB.right ||
-                rectA.bottom < rectB.top ||
-                rectA.top > rectB.bottom
-            );
+        class Game {
+            constructor() {
+                this.score = 0;
+                this.timeLeft = 30;
+                this.timer = null;
+                this.isPlaying = false;
+
+                // DOM elements
+                this.balloon = document.getElementById('balloon');
+                this.scoreDisplay = document.getElementById('score');
+                this.timeDisplay = document.getElementById('time');
+                this.startButton = document.getElementById('start-button');
+                this.playerNameInput = document.getElementById('player-name-input');
+
+                // Event listeners
+                this.startButton.addEventListener('click', () => this.startGame());
+                this.balloon.addEventListener('click', () => this.popBalloon());
+
+                // Load high scores when game initializes
+                this.loadHighScores();
+            }
+
+            loadHighScores() {
+                // Get top 10 scores ordered by score
+                database.ref('leaderboard')
+                    .orderByChild('score')
+                    .limitToLast(10)
+                    .on('value', (snapshot) => {
+                        const scores = [];
+                        snapshot.forEach((childSnapshot) => {
+                            scores.push(childSnapshot.val());
+                        });
+                        
+                        // Sort scores in descending order
+                        scores.sort((a, b) => b.score - a.score);
+                        this.updateHighScores(scores);
+                    });
+            }
+
+            startGame() {
+                if (!this.playerNameInput.value.trim()) {
+                    alert('Please enter your name first!');
+                    return;
+                }
+
+                this.isPlaying = true;
+                this.score = 0;
+                this.timeLeft = 30;
+                this.updateDisplay();
+                this.startButton.disabled = true;
+                this.playerNameInput.disabled = true;
+
+                this.timer = setInterval(() => {
+                    this.timeLeft--;
+                    this.updateDisplay();
+
+                    if (this.timeLeft <= 0) {
+                        this.endGame();
+                    }
+                }, 1000);
+
+                this.moveBalloon();
+            }
+
+            endGame() {
+                clearInterval(this.timer);
+                this.isPlaying = false;
+                this.startButton.disabled = false;
+                this.playerNameInput.disabled = false;
+
+                // Save score to Firebase
+                database.ref('leaderboard').push({
+                    name: this.playerNameInput.value,
+                    score: this.score
+                });
+
+                alert(`Game Over! Your score: ${this.score}`);
+            }
+
+            popBalloon() {
+                if (!this.isPlaying) return;
+                
+                this.score++;
+                this.updateDisplay();
+                this.moveBalloon();
+            }
+
+            moveBalloon() {
+                const gameContainer = document.getElementById('game-container');
+                const maxX = gameContainer.clientWidth - 100;
+                const maxY = gameContainer.clientHeight - 100;
+
+                const randomX = Math.random() * maxX;
+                const randomY = Math.random() * maxY;
+
+                this.balloon.style.position = 'relative';
+                this.balloon.style.left = `${randomX}px`;
+                this.balloon.style.top = `${randomY}px`;
+            }
+
+            updateDisplay() {
+                this.scoreDisplay.textContent = this.score;
+                this.timeDisplay.textContent = this.timeLeft;
+            }
+
+            updateHighScores(scores) {
+                const scoresList = document.getElementById('scores-list');
+                scoresList.innerHTML = scores
+                    .map((score, index) => `
+                        <div>${index + 1}. ${score.name}: ${score.score}</div>
+                    `)
+                    .join('');
+            }
         }
 
-        function updateGame() {
-            // Update ball position
-            ballX += ballSpeedX;
-            ballY += ballSpeedY;
-
-            // Get current positions and sizes
-            const ballRect = {
-                left: ballX,
-                right: ballX + ballSize,
-                top: ballY,
-                bottom: ballY + ballSize
-            };
-
-            const computerPaddleRect = {
-                left: 50,
-                right: 70,
-                top: computerPaddleY,
-                bottom: computerPaddleY + 100
-            };
-
-            const playerPaddleRect = {
-                left: window.innerWidth - 70,
-                right: window.innerWidth - 50,
-                top: playerPaddleY,
-                bottom: playerPaddleY + 100
-            };
-
-            // Ball collision with top and bottom walls
-            if (ballY <= 0 || ballY >= window.innerHeight - ballSize) {
-                ballSpeedY = -ballSpeedY;
-                ballY = ballY <= 0 ? 0 : window.innerHeight - ballSize;
-            }
-
-            // Ball collision with paddles
-            if (checkCollision(ballRect, computerPaddleRect)) {
-                ballX = computerPaddleRect.right;
-                ballSpeedX = Math.abs(ballSpeedX); // Ensure ball moves right
-                // Add some randomness to the Y speed
-                ballSpeedY = (((ballY + ballSize/2) - (computerPaddleY + 50)) / 50) * 5;
-            }
-
-            if (checkCollision(ballRect, playerPaddleRect)) {
-                ballX = playerPaddleRect.left - ballSize;
-                ballSpeedX = -Math.abs(ballSpeedX); // Ensure ball moves left
-                // Add some randomness to the Y speed
-                ballSpeedY = (((ballY + ballSize/2) - (playerPaddleY + 50)) / 50) * 5;
-            }
-
-            // Scoring
-            if (ballX <= 0) {
-                playerScore++;
-                playerScoreElement.textContent = playerScore;
-                resetBall();
-            }
-            if (ballX >= window.innerWidth - ballSize) {
-                computerScore++;
-                computerScoreElement.textContent = computerScore;
-                resetBall();
-            }
-
-            // Computer AI with occasional misses
-            if (Date.now() - lastMissDecision > 2000) { // Decide whether to miss every 2 seconds
-                shouldMiss = Math.random() < missProb;
-                lastMissDecision = Date.now();
-            }
-
-            if (!shouldMiss) {
-                // Normal tracking
-                if (computerPaddleY + 50 < ballY) {
-                    computerPaddleY += 5;
-                }
-                if (computerPaddleY + 50 > ballY) {
-                    computerPaddleY -= 5;
-                }
-            } else {
-                // Intentionally move away or delay reaction
-                if (computerPaddleY + 50 < ballY) {
-                    computerPaddleY += 2; // Move slower when missing
-                }
-                if (computerPaddleY + 50 > ballY) {
-                    computerPaddleY -= 2;
-                }
-            }
-
-            // Keep computer paddle within bounds
-            computerPaddleY = Math.max(0, Math.min(window.innerHeight - 100, computerPaddleY));
-
-            // Update positions
-            ball.style.left = ballX + 'px';
-            ball.style.top = ballY + 'px';
-            computerPaddle.style.top = computerPaddleY + 'px';
-            playerPaddle.style.top = playerPaddleY + 'px';
-
-            requestAnimationFrame(updateGame);
-        }
-
-        function resetBall() {
-            ballX = window.innerWidth / 2;
-            ballY = window.innerHeight / 2;
-            // Randomize initial direction
-            ballSpeedX = (Math.random() > 0.5 ? 5 : -5);
-            ballSpeedY = (Math.random() * 6 - 3); // Random Y velocity between -3 and 3
-        }
-
-        // Player paddle control with mouse
-        document.addEventListener('mousemove', (e) => {
-            playerPaddleY = e.clientY - 50;
-            if (playerPaddleY < 0) playerPaddleY = 0;
-            if (playerPaddleY > window.innerHeight - 100) playerPaddleY = window.innerHeight - 100;
-        });
-
-        // Start the game
-        updateGame();
+        // Initialize the game
+        const game = new Game();
     </script>
 </body>
 </html>
